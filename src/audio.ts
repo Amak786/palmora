@@ -48,6 +48,15 @@ function ensure(): AudioContext | null {
   }
 }
 
+/** A copy of the game's audio as a MediaStream, for recording the demo video. */
+export function captureAudioStream(): MediaStream | null {
+  const c = ensure();
+  if (c == null || master == null) return null;
+  const dest = c.createMediaStreamDestination();
+  master.connect(dest);
+  return dest.stream;
+}
+
 /** Fade music layers 0..count-1 in and the rest out. */
 export function setMusicLayers(count: number): void {
   const c = ensure();

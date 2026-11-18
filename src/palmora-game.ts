@@ -57,7 +57,7 @@ import {
   TorusGeometry,
   Vector3,
 } from 'three';
-import { chord, setMusicLayers, tone } from './audio.js';
+import { captureAudioStream, chord, setMusicLayers, tone } from './audio.js';
 import { HandReader, HandState } from './hands.js';
 import { ReplayButton } from './palmora-components.js';
 
@@ -277,6 +277,7 @@ export class PalmoraSystem extends createSystem({
         stopSim: () => {
           this.sim = null;
         },
+        captureAudioStream,
       };
     }
 
@@ -287,11 +288,15 @@ export class PalmoraSystem extends createSystem({
       label.ctx.fillStyle = 'rgba(10, 8, 30, 0.7)';
       label.ctx.fillRect(0, 0, label.canvas.width, label.canvas.height);
       label.ctx.fillStyle = '#ffd36b';
-      label.ctx.font = '600 30px sans-serif';
+      label.ctx.font = '600 22px sans-serif';
       label.ctx.textAlign = 'center';
       label.ctx.fillText('DEMO · emulated hand input (no headset)', label.canvas.width / 2, label.canvas.height * 0.68);
       label.tex.needsUpdate = true;
       this.world.createTransformEntity(label.mesh);
+      this.camera.fov = 44;
+      this.camera.position.set(0, 1.27, 0.3);
+      this.camera.lookAt(0, 1.07, -0.45);
+      this.camera.updateProjectionMatrix();
       this.demo = {
         phase: 0,
         t: 0,
