@@ -162,6 +162,23 @@ export interface SimHand {
   palm: [number, number, number]; // also used as the pinch point
 }
 
+interface DemoState {
+  phase: number;
+  t: number;
+  node: number;
+  L: Vector3;
+  R: Vector3;
+  lOpen: boolean;
+  rOpen: boolean;
+  lPinch: boolean;
+  rPinch: boolean;
+  label: Panel;
+}
+
+const DEMO_REST_L = new Vector3(-0.28, 0.82, -0.18);
+const DEMO_REST_R = new Vector3(0.28, 0.82, -0.18);
+const DEMO_SPEED = 0.32; // metres per second
+
 export class PalmoraSystem extends createSystem({
   replayPressed: { required: [ReplayButton, Pressed] },
   domes: { required: [DomeGradient] },
@@ -210,6 +227,7 @@ export class PalmoraSystem extends createSystem({
   private bubble!: Panel;
   private eco!: Panel;
   private ecoKey = '';
+  private demo: DemoState | null = null;
 
   private tmp = new Vector3();
   private tmp2 = new Vector3();
@@ -262,7 +280,125 @@ export class PalmoraSystem extends createSystem({
       };
     }
 
+    if (typeof location !== 'undefined' && location.search.includes('demo')) {
+      // Automatic demo for screen recording without a headset. Hands are
+      // EMULATED and labelled as such on screen.
+      const label = makePanel(0.36, 0.045, new Vector3(0, 0.86, -0.45));
+      label.ctx.fillStyle = 'rgba(10, 8, 30, 0.7)';
+      label.ctx.fillRect(0, 0, label.canvas.width, label.canvas.height);
+      label.ctx.fillStyle = '#ffd36b';
+      label.ctx.font = '600 30px sans-serif';
+      label.ctx.textAlign = 'center';
+      label.ctx.fillText('DEMO · emulated hand input (no headset)', label.canvas.width / 2, label.canvas.height * 0.68);
+      label.tex.needsUpdate = true;
+      this.world.createTransformEntity(label.mesh);
+      this.demo = {
+        phase: 0,
+        t: 0,
+        node: 0,
+        L: DEMO_REST_L.clone(),
+        R: DEMO_REST_R.clone(),
+        lOpen: false,
+        rOpen: false,
+        lPinch: false,
+        rPinch: false,
+        label,
+      };
+    }
+
     this.restart();
+  }
+
+  // ======================= automatic demo =======================
+
+  private updateDemo(dt: number): void {
+    const d = this.demo!;
+    d.t += dt;
+    const move = (v: Vector3, target: Vector3): boolean => {
+      const gap = target.distanceTo(v);
+      const stepLen = DEMO_SPEED * dt;
+      if (gap <= stepLen) {
+        v.copy(target);
+        return true;
+      }
+      v.add(this.tmp2.copy(target).sub(v).multiplyScalar(stepLen / gap));
+      return false;
+    };
+    const next = (phase: number) => {
+      d.phase = phase;
+      d.t = 0;
+    };
+    const held = this.seeds.filter((x) => x.state === SEED_HELD).length;
+
+    switch (d.phase) {
+      case 0: // a quiet moment to see the dormant world
+        d.lOpen = d.rOpen = d.lPinch = d.rPinch = false;
+        if (d.t > 2.5) next(1);
+        break;
+      case 1: // open right palm near the seeds
+        d.rOpen = true;
+        move(d.L, DEMO_REST_L);
+        move(d.R, new Vector3(0.26, 1.1, -0.36));
+        if (d.t > 3.5 && held >= 2) next(2);
+        break;
+      case 2: // carry them to the first island and lower the palm
+        move(d.R, new Vector3(-0.2, 1.0, -0.42));
+        if (this.stage !== 'seeds') next(3);
+        else if (d.t > 7) next(1);
+        break;
+      case 3: // the bridge: one palm over each island
+        d.lOpen = d.rOpen = true;
+        move(d.L, new Vector3(-0.2, 1.03, -0.42));
+        move(d.R, new Vector3(0.2, 1.03, -0.42));
+        if (this.stage === 'weave') {
+          d.node = 0;
+          next(4);
+        }
+        break;
+      case 4: { // reach for a crystal
+        const node = this.nodes[d.node];
+        const useLeft = d.node === 0;
+        d.lOpen = d.rOpen = false;
+        d.lPinch = d.rPinch = false;
+        move(useLeft ? d.R : d.L, useLeft ? DEMO_REST_R : DEMO_REST_L);
+        if (move(useLeft ? d.L : d.R, node.mesh.position) && d.t > 0.8) next(5);
+        break;
+      }
+      case 5: { // pinch and carry it to its socket
+        const node = this.nodes[d.node];
+        const useLeft = d.node === 0;
+        if (useLeft) d.lPinch = true;
+        else d.rPinch = true;
+        if (d.t > 0.4 && move(useLeft ? d.L : d.R, node.socket) && d.t > 1) next(6);
+        break;
+      }
+      case 6: // release
+        d.lPinch = d.rPinch = false;
+        if (d.t > 0.8) {
+          d.node += 1;
+          next(d.node < this.nodes.length ? 4 : 7);
+        }
+        break;
+      case 7: { // cradle the Heart, hands slowly closing in
+        d.lOpen = d.rOpen = true;
+        const gap = d.t < 1.5 ? 0.14 : 0.085;
+        move(d.L, new Vector3(HEART.x - gap, HEART.y, HEART.z));
+        move(d.R, new Vector3(HEART.x + gap, HEART.y, HEART.z));
+        if (this.stage === 'complete') next(8);
+        break;
+      }
+      default: // let the restored world breathe
+        if (d.t > 1) {
+          d.lOpen = d.rOpen = false;
+          move(d.L, DEMO_REST_L);
+          move(d.R, DEMO_REST_R);
+        }
+    }
+
+    this.sim = {
+      left: { tracked: true, open: d.lOpen, pinch: d.lPinch, palm: [d.L.x, d.L.y, d.L.z] },
+      right: { tracked: true, open: d.rOpen, pinch: d.rPinch, palm: [d.R.x, d.R.y, d.R.z] },
+    };
   }
 
   // ======================= building the world =======================
@@ -723,6 +859,7 @@ export class PalmoraSystem extends createSystem({
     this.stageClock += dt;
     if (this.stage !== 'complete') this.elapsed += dt;
 
+    if (this.demo != null) this.updateDemo(dt);
     if (this.sim != null) this.applySim();
     else this.hands.update(this.renderer, this.player, dt);
 
