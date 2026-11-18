@@ -39,6 +39,7 @@ import {
   CanvasTexture,
   Color,
   ConeGeometry,
+  CircleGeometry,
   CylinderGeometry,
   Group,
   IcosahedronGeometry,
@@ -203,13 +204,18 @@ export class PalmoraSystem extends createSystem({
   private replay!: Entity;
   private replayMesh!: Mesh;
   private dust!: Points;
+  private tree!: Group;
+  private pond!: MeshBasicMaterial;
+  private creature!: Group;
+  private bubble!: Panel;
+  private eco!: Panel;
+  private ecoKey = '';
 
   private tmp = new Vector3();
   private tmp2 = new Vector3();
   private dummy = new Object3D();
 
   init(): void {
-    this.scene.background = new Color(0x06051a);
     // The default sky is a pale gradient; turn it into a deep indigo void.
     this.queries.domes.subscribe('qualify', (e: Entity) => this.darkenDome(e));
     for (const e of this.queries.domes.entities) this.darkenDome(e);
@@ -223,6 +229,7 @@ export class PalmoraSystem extends createSystem({
     this.buildBridge();
     this.buildNodes();
     this.buildPalmGlows();
+    this.buildLife();
 
     this.hint = makePanel(0.42, 0.11, new Vector3(0, 1.3, -0.72));
     this.world.createTransformEntity(this.hint.mesh);
@@ -431,6 +438,178 @@ export class PalmoraSystem extends createSystem({
     this.world.createTransformEntity(this.spark);
   }
 
+  /** The tree, pond, creature and ecosystem panel that make the world feel alive. */
+  private buildLife(): void {
+    // A glowing violet tree that grows as the first island blooms.
+    this.tree = new Group();
+    const bark = new MeshStandardMaterial({ color: 0x5a3b2a, roughness: 0.8, flatShading: true });
+    const trunk = new Mesh(new CylinderGeometry(0.006, 0.011, 0.075, 6), bark);
+    trunk.position.y = 0.037;
+    trunk.rotation.z = 0.12;
+    this.tree.add(trunk);
+    const leaf = new MeshStandardMaterial({
+      color: 0xb58cff,
+      emissive: new Color(0x8a4dff),
+      emissiveIntensity: 0.9,
+      flatShading: true,
+    });
+    const blobs: [number, number, number, number][] = [
+      [0, 0.09, 0, 0.034],
+      [0.026, 0.08, 0.008, 0.026],
+      [-0.024, 0.082, -0.006, 0.027],
+      [0.006, 0.1, -0.02, 0.024],
+      [-0.008, 0.104, 0.02, 0.022],
+    ];
+    for (const [x, y, z, r] of blobs) {
+      const blob = new Mesh(new IcosahedronGeometry(r, 0), leaf);
+      blob.position.set(x, y, z);
+      this.tree.add(blob);
+    }
+    this.tree.position.set(-0.025, 0.015, -0.015);
+    this.tree.scale.setScalar(0.001);
+    this.islands[0].root.add(this.tree);
+
+    // A glowing pond on the second island.
+    this.pond = new MeshBasicMaterial({ color: 0x5ff2ff, transparent: true, opacity: 0, blending: AdditiveBlending, depthWrite: false });
+    const pond = new Mesh(new CircleGeometry(0.05, 24), this.pond);
+    pond.rotation.x = -Math.PI / 2;
+    pond.position.y = 0.0162;
+    this.islands[1].root.add(pond);
+
+    // A small glowing creature that appears once the first island is alive.
+    this.creature = new Group();
+    const skin = new MeshStandardMaterial({ color: 0xffe9b0, emissive: new Color(0xffb347), emissiveIntensity: 0.9 });
+    const body = new Mesh(new SphereGeometry(0.016, 16, 12), skin);
+    body.position.y = 0.016;
+    const head = new Mesh(new SphereGeometry(0.013, 16, 12), skin);
+    head.position.y = 0.038;
+    const earGeo = new ConeGeometry(0.005, 0.02, 6);
+    const earL = new Mesh(earGeo, skin);
+    earL.position.set(-0.009, 0.053, 0);
+    earL.rotation.z = 0.5;
+    const earR = new Mesh(earGeo, skin);
+    earR.position.set(0.009, 0.053, 0);
+    earR.rotation.z = -0.5;
+    const eyeMat = new MeshBasicMaterial({ color: 0x2a1a3a });
+    const eyeGeo = new SphereGeometry(0.0022, 8, 6);
+    const eyeL = new Mesh(eyeGeo, eyeMat);
+    eyeL.position.set(-0.005, 0.04, 0.012);
+    const eyeR = new Mesh(eyeGeo, eyeMat);
+    eyeR.position.set(0.005, 0.04, 0.012);
+    this.creature.add(body, head, earL, earR, eyeL, eyeR);
+    this.creature.position.set(0.035, 0.015, 0.025);
+    this.creature.visible = false;
+    this.islands[0].root.add(this.creature);
+
+    this.bubble = makePanel(0.17, 0.05, new Vector3(-0.2, 1.19, -0.4));
+    this.bubble.mesh.visible = false;
+    this.world.createTransformEntity(this.bubble.mesh);
+    this.drawBubble();
+
+    // "Your Ecosystem" progress panel to the right.
+    this.eco = makePanel(0.2, 0.17, new Vector3(0.38, 1.14, -0.5));
+    this.eco.mesh.rotation.y = -0.6;
+    this.world.createTransformEntity(this.eco.mesh);
+  }
+
+  private drawBubble(): void {
+    const { ctx, canvas, tex } = this.bubble;
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(20, 16, 50, 0.85)';
+    ctx.beginPath();
+    ctx.roundRect(6, 6, w - 12, h - 12, 40);
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd36b';
+    ctx.font = '600 44px sans-serif';
+    ctx.fillText('Thank you!', w / 2, h * 0.42);
+    ctx.fillStyle = '#e9f6ff';
+    ctx.font = '34px sans-serif';
+    ctx.fillText('You brought life back…', w / 2, h * 0.78);
+    tex.needsUpdate = true;
+  }
+
+  private progress(): number {
+    const parts = [
+      this.islands[0].restored ? 1 : Math.min(this.islands[0].seeds / SEEDS_NEEDED, 1),
+      this.islands[1].restored ? 1 : this.stage === 'bridge' ? this.wispT : 0,
+      this.stage === 'resonance' || this.stage === 'complete' ? 1 : this.nodes.filter((n) => n.locked).length / 2,
+      this.stage === 'complete' ? 1 : this.resonance,
+    ];
+    return parts.reduce((a, b) => a + b, 0) / parts.length;
+  }
+
+  private updateLife(dt: number): void {
+    const a = this.islands[0];
+    const grow = Math.max(0.001, Math.min(1, (a.bloom - 0.1) / 0.9));
+    this.tree.scale.setScalar(grow * 1.5);
+    this.tree.rotation.y += dt * 0.15;
+    this.pond.opacity = this.islands[1].bloom * (0.55 + Math.sin(this.clock * 2) * 0.1);
+
+    this.creature.visible = a.restored;
+    if (this.creature.visible) {
+      const hop = this.stage === 'complete' ? Math.abs(Math.sin(this.clock * 4)) * 0.012 : Math.sin(this.clock * 2) * 0.003;
+      this.creature.position.y = 0.015 + hop;
+    }
+    this.bubble.mesh.visible = this.stage === 'complete';
+
+    const pct = Math.round(this.progress() * 100);
+    const done = [a.restored, this.islands[1].restored, this.stage === 'resonance' || this.stage === 'complete', this.stage === 'complete'];
+    const key = `${pct}|${done.join()}`;
+    if (key === this.ecoKey) return;
+    this.ecoKey = key;
+
+    const { ctx, canvas, tex } = this.eco;
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(16, 20, 48, 0.82)';
+    ctx.beginPath();
+    ctx.roundRect(6, 6, w - 12, h - 12, 36);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(127, 231, 255, 0.5)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = '#e9f6ff';
+    ctx.font = '600 38px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('Your Ecosystem', 36, 66);
+    ctx.fillStyle = '#5ff2a0';
+    ctx.font = '700 52px sans-serif';
+    ctx.fillText(`${pct}%`, 36, 132);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(36, 152, w - 72, 14);
+    ctx.fillStyle = '#5ff2a0';
+    ctx.fillRect(36, 152, (w - 72) * (pct / 100), 14);
+    const items = ['Grow the Garden', 'Build the Bridge', 'Mend the Paths', 'Restore the Heart'];
+    items.forEach((label, i) => {
+      const y = 214 + i * 54;
+      ctx.beginPath();
+      ctx.arc(52, y - 10, 15, 0, Math.PI * 2);
+      if (done[i]) {
+        ctx.fillStyle = '#5ff2a0';
+        ctx.fill();
+        ctx.strokeStyle = '#10142f';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(44, y - 10);
+        ctx.lineTo(50, y - 3);
+        ctx.lineTo(61, y - 17);
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = 'rgba(233,246,255,0.6)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+      ctx.fillStyle = done[i] ? '#e9f6ff' : 'rgba(233,246,255,0.7)';
+      ctx.font = '30px sans-serif';
+      ctx.fillText(label, 82, y);
+    });
+    tex.needsUpdate = true;
+  }
+
   private buildPalmGlows(): void {
     const geo = new SphereGeometry(0.035, 16, 12);
     const make = (): Mesh => {
@@ -558,6 +737,7 @@ export class PalmoraSystem extends createSystem({
     this.updatePalmGlows();
     this.dust.rotation.y += dt * 0.03;
     this.drawHint();
+    this.updateLife(dt);
   }
 
   // ---------- stage 1: Palm of Attraction ----------
